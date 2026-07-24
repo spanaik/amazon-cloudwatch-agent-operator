@@ -7,7 +7,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/logr/funcr"
@@ -15,7 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/ptr"
 )
 
@@ -160,17 +158,12 @@ func TestLoadConfigScraperRouting(t *testing.T) {
 			w.scraperRole = tc.role
 			defer func() { _ = w.Close() }()
 
-			for _, informer := range w.informers {
-				informer.Start(w.stopChannel)
-			}
-			// Bounded sync wait instead of an unbounded HasSynced spin loop, so a
-			// stuck informer fails fast rather than hanging until CI kills it.
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			for _, informer := range w.informers {
-				require.True(t, cache.WaitForCacheSync(ctx.Done(), informer.HasSynced),
-					"informer cache did not sync before timeout")
-			}
+			// Start the SM/PM informers via the CRD-resilience lazy-start path so
+			// w.informers is populated (the test helper no longer pre-builds them);
+			// startMonitorInformer blocks on cache sync internally.
+			notify := make(chan struct{}, 1)
+			require.NoError(t, w.startMonitorInformer(monitoringv1.ServiceMonitorName, notify))
+			require.NoError(t, w.startMonitorInformer(monitoringv1.PodMonitorName, notify))
 
 			got, err := w.LoadConfig(context.Background())
 			require.NoError(t, err)
