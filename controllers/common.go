@@ -30,6 +30,9 @@ const (
 	acceleratedComputeMetrics = "accelerated_compute_metrics"
 	amazonCloudWatchNamespace = "amazon-cloudwatch"
 	amazonCloudWatchAgentName = "cloudwatch-agent"
+
+	dcgmExporterOtelReceiver  = "prometheus/cw_k8s_ci_v0_dcgm"
+	neuronMonitorOtelReceiver = "prometheus/cw_k8s_ci_v0_neuron"
 )
 
 func isNamespaceScoped(obj client.Object) bool {
@@ -162,11 +165,18 @@ func pruneStaleObjects(ctx context.Context, kubeClient client.Client, logger log
 	return errors.Join(pruneErrs...)
 }
 
-func enabledAcceleratedComputeByAgentConfig(ctx context.Context, c client.Client, log logr.Logger) bool {
+// enabledAcceleratedCompute reports whether either Container Insights metrics path asks for the
+// exporter scraped by otelReceiver.
+func enabledAcceleratedCompute(ctx context.Context, c client.Client, log logr.Logger, otelReceiver string) bool {
 	agentResource := getAmazonCloudWatchAgentResource(ctx, c)
+	return enabledAcceleratedComputeByAgentConfig(agentResource.Spec.Config, log) ||
+		enabledAcceleratedComputeByOtelConfig(agentResource.Spec.OtelConfig, otelReceiver, log)
+}
+
+func enabledAcceleratedComputeByAgentConfig(agentConfig string, log logr.Logger) bool {
 	// missing feature flag means it's on by default
-	featureConfigExists := strings.Contains(agentResource.Spec.Config, acceleratedComputeMetrics)
-	conf, err := adapters.ConfigStructFromJSONString(agentResource.Spec.Config)
+	featureConfigExists := strings.Contains(agentConfig, acceleratedComputeMetrics)
+	conf, err := adapters.ConfigStructFromJSONString(agentConfig)
 	if err != nil {
 		log.Error(err, "Failed to unmarshall agent configuration")
 		return false
@@ -178,6 +188,47 @@ func enabledAcceleratedComputeByAgentConfig(ctx context.Context, c client.Client
 		} else {
 			// enhanced container insights is disabled
 			return false
+		}
+	}
+	return false
+}
+
+func enabledAcceleratedComputeByOtelConfig(otelConfig string, otelReceiver string, log logr.Logger) bool {
+	if strings.TrimSpace(otelConfig) == "" {
+		return false
+	}
+	conf, err := adapters.ConfigFromString(otelConfig)
+	if err != nil {
+		log.Error(err, "Failed to unmarshall agent OTEL configuration")
+		return false
+	}
+	return otelPipelinesReferenceReceiver(conf, otelReceiver)
+}
+
+// otelPipelinesReferenceReceiver reports whether any service pipeline lists receiver. Declaring a
+// receiver is not enough: OTEL only starts one a pipeline references.
+func otelPipelinesReferenceReceiver(otelConfig map[interface{}]interface{}, receiver string) bool {
+	service, ok := otelConfig["service"].(map[interface{}]interface{})
+	if !ok {
+		return false
+	}
+	pipelines, ok := service["pipelines"].(map[interface{}]interface{})
+	if !ok {
+		return false
+	}
+	for _, pipeline := range pipelines {
+		pipelineConf, ok := pipeline.(map[interface{}]interface{})
+		if !ok {
+			continue
+		}
+		receivers, ok := pipelineConf["receivers"].([]interface{})
+		if !ok {
+			continue
+		}
+		for _, r := range receivers {
+			if name, ok := r.(string); ok && name == receiver {
+				return true
+			}
 		}
 	}
 	return false

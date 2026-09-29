@@ -95,8 +95,8 @@ func (r *NeuronMonitorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, buildErr
 	}
 
-	if !enabledAcceleratedComputeByAgentConfig(ctx, r.Client, log) {
-		log.Info("enhanced_container_insights or accelerated_compute_metrics is disabled")
+	if !enabledAcceleratedCompute(ctx, r.Client, log, neuronMonitorOtelReceiver) {
+		log.Info("neither enhanced Container Insights nor OTEL Container Insights is collecting Neuron metrics")
 		for _, obj := range desiredObjects {
 			if err := r.Delete(ctx, obj, client.PropagationPolicy(metav1.DeletePropagationBackground)); client.IgnoreNotFound(err) != nil {
 				log.Error(err, "unable to delete resources", "resource", obj)
