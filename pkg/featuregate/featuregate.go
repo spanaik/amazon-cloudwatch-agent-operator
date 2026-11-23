@@ -88,6 +88,14 @@ var (
 		"operator.autoinstrumentation.multiinstrumentation.skipcontainervalidation",
 		featuregate.StageBeta,
 		featuregate.WithRegisterDescription("controls whether the operator validates the container annotations when multi-instrumentation is enabled"))
+
+	// EnableEngineTracingSupport is the feature gate that controls whether the operator turns on
+	// a model server's own OpenTelemetry tracing, for vLLM and SGLang containers, and points it at
+	// the node agent's OTLP receiver.
+	EnableEngineTracingSupport = featuregate.GlobalRegistry().MustRegister(
+		"operator.engine.tracing",
+		featuregate.StageAlpha,
+		featuregate.WithRegisterDescription("controls whether the operator turns on model server tracing for vLLM and SGLang containers"))
 )
 
 // Flags creates a new FlagSet that represents the available featuregate flags using the supplied featuregate registry.

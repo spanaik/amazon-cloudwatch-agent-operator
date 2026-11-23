@@ -187,6 +187,10 @@ func main() {
 		neuronMonitorImage           string
 		targetAllocatorImage         string
 		managePrometheusCRDs         bool
+		engineTracesEndpoint         string
+		engineTracesSampler          string
+		engineTracesSamplerArg       string
+		engineTracesKeepAppSignals   bool
 	)
 
 	pflag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
@@ -204,7 +208,26 @@ func main() {
 	stringFlagOrEnv(&dcgmExporterImage, "dcgm-exporter-image", "RELATED_IMAGE_DCGM_EXPORTER", fmt.Sprintf("%s:%s", dcgmExporterImageRepository, v.DcgmExporter), "The default DCGM Exporter image. This image is used when no image is specified in the CustomResource.")
 	stringFlagOrEnv(&neuronMonitorImage, "neuron-monitor-image", "RELATED_IMAGE_NEURON_MONITOR", fmt.Sprintf("%s:%s", neuronMonitorImageRepository, v.NeuronMonitor), "The default Neuron monitor image. This image is used when no image is specified in the CustomResource.")
 	stringFlagOrEnv(&targetAllocatorImage, "target-allocator-image", "RELATED_IMAGE_TARGET_ALLOCATOR", fmt.Sprintf("%s:%s", targetAllocatorImageRepository, v.TargetAllocator), "The default AmazonCloudWatchAgent target allocator image. This image is used when no image is specified in the CustomResource.")
+	stringFlagOrEnv(&engineTracesEndpoint, "engine-traces-endpoint", instrumentation.EnvEngineTracesEndpoint, "", "The OTLP/gRPC endpoint, as host:port, that vLLM and SGLang containers are pointed at while the operator.engine.tracing feature gate is on. Empty uses the node agent's Service in the amazon-cloudwatch namespace.")
+	stringFlagOrEnv(&engineTracesSampler, "engine-traces-sampler", instrumentation.EnvEngineTracesSampler, "", "OTEL_TRACES_SAMPLER for vLLM and SGLang containers, for example parentbased_traceidratio. Empty leaves the engine's own default, which follows the caller's sampling decision.")
+	stringFlagOrEnv(&engineTracesSamplerArg, "engine-traces-sampler-arg", instrumentation.EnvEngineTracesSamplerArg, "", "OTEL_TRACES_SAMPLER_ARG for vLLM and SGLang containers, for example 0.1. Read only with --engine-traces-sampler.")
+	pflag.BoolVar(&engineTracesKeepAppSignals, "engine-traces-keep-application-signals", false, "Leave Python auto-instrumentation on vLLM and SGLang containers. Both engines export from the global tracer provider, which the Python distro owns, so the engine's own endpoint then receives nothing. Set this only for an engine that exports from the provider it configured.")
 	pflag.Parse()
+
+	// The pod mutator reads these from the environment, as the auto-instrumentation settings
+	// above do, so the flags have to reach it the same way.
+	for name, value := range map[string]string{
+		instrumentation.EnvEngineTracesEndpoint:   engineTracesEndpoint,
+		instrumentation.EnvEngineTracesSampler:    engineTracesSampler,
+		instrumentation.EnvEngineTracesSamplerArg: engineTracesSamplerArg,
+	} {
+		if value != "" {
+			_ = os.Setenv(name, value)
+		}
+	}
+	if engineTracesKeepAppSignals {
+		_ = os.Setenv(instrumentation.EnvEngineTracesKeepAppSignals, "true")
+	}
 
 	// set instrumentation cpu and memory limits in environment variables to be used for default instrumentation; default values received from https://github.com/open-telemetry/opentelemetry-operator/blob/main/apis/v1alpha1/instrumentation_webhook.go
 	autoInstrumentationConfig := map[string]map[string]map[string]string{"java": {"limits": {"cpu": "500m", "memory": "64Mi"}, "requests": {"cpu": "50m", "memory": "64Mi"}, "runtime_metrics": {"enabled": "true"}, "service_events": {}, "dynamic_instrumentation": {}}, "python": {"limits": {"cpu": "500m", "memory": "32Mi"}, "requests": {"cpu": "50m", "memory": "32Mi"}, "runtime_metrics": {"enabled": "true"}, "service_events": {}, "dynamic_instrumentation": {}}, "dotnet": {"limits": {"cpu": "500m", "memory": "128Mi"}, "requests": {"cpu": "50m", "memory": "128Mi"}, "runtime_metrics": {"enabled": "true"}}, "nodejs": {"limits": {"cpu": "500m", "memory": "128Mi"}, "requests": {"cpu": "50m", "memory": "128Mi"}, "service_events": {}, "dynamic_instrumentation": {}}}

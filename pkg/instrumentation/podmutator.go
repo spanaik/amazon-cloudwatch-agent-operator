@@ -207,6 +207,11 @@ func NewMutator(logger logr.Logger, client client.Client, recorder record.EventR
 func (pm *instPodMutator) Mutate(ctx context.Context, ns corev1.Namespace, pod corev1.Pod) (corev1.Pod, error) {
 	logger := pm.Logger.WithValues("namespace", pod.Namespace, "name", pod.Name)
 
+	// Engine tracing runs first and independently of the language annotations, so that a model
+	// server gets its own tracing even when no language SDK is injected, and so that it claims
+	// OTEL_PROPAGATORS before the language path can name a propagator its image lacks.
+	pod = pm.injectEngineTraces(ctx, logger, ns, pod)
+
 	// We check if Pod is already instrumented.
 	if isAutoInstrumentationInjected(pod) {
 		logger.Info("Skipping pod instrumentation - already instrumented")
